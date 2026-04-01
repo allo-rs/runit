@@ -44,7 +44,7 @@ cmd_install_docker() {
         service docker start
     else
         info "使用官方脚本安装（get.docker.com）..."
-        bash <(curl -fsSL https://get.docker.com)
+        curl -fsSL https://get.docker.com | sh
     fi
 
     # 启动并设置开机自启
@@ -88,11 +88,7 @@ cmd_install_caddy() {
         apt)
             info "Debian/Ubuntu：添加官方源..."
             apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
-            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-                | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-                | tee /etc/apt/sources.list.d/caddy-stable.list
-            apt-get update -y
+            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/setup.deb.sh' | bash
             apt-get install -y caddy
             ;;
         dnf|yum)
@@ -155,7 +151,7 @@ _caddy_install_binary() {
     info "获取最新版本号..."
     local version
     version=$(curl -fsSL https://api.github.com/repos/caddyserver/caddy/releases/latest \
-        | grep '"tag_name"' | grep -oP 'v[\d.]+')
+        | grep '"tag_name"' | sed 's/.*"tag_name": *"\(v[^"]*\)".*/\1/')
     [[ -z "$version" ]] && die "无法获取 Caddy 版本信息"
 
     local url="https://github.com/caddyserver/caddy/releases/download/${version}/caddy_${version#v}_linux_${bin_arch}.tar.gz"

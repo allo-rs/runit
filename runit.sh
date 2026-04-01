@@ -51,6 +51,7 @@ MAIN_MENU_ITEMS=(
     "安全配置"
     "应用安装"
     "系统优化"
+    "维护工具"
 )
 
 MAIN_MENU_MODULES=(
@@ -59,6 +60,7 @@ MAIN_MENU_MODULES=(
     "03-security"
     "04-apps"
     "05-optimize"
+    "06-maintain"
 )
 
 MAIN_MENU_FUNCS=(
@@ -67,6 +69,7 @@ MAIN_MENU_FUNCS=(
     "menu_security"
     "menu_apps"
     "menu_optimize"
+    "menu_maintain"
 )
 
 main_menu() {

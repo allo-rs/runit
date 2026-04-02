@@ -111,11 +111,15 @@ main() {
     # 支持命令行直接运行子模块: ./runit.sh network
     if [[ $# -gt 0 ]]; then
         case "$1" in
-            system)  _load_module "01-system"; menu_system ;;
-            network) _load_module "02-network"; menu_network ;;
+            system)   _load_module "01-system";   menu_system ;;
+            network)  _load_module "02-network";  menu_network ;;
+            security) _load_module "03-security"; menu_security ;;
+            apps)     _load_module "04-apps";     menu_apps ;;
+            optimize) _load_module "05-optimize"; menu_optimize ;;
+            maintain) _load_module "06-maintain"; menu_maintain ;;
             -v|--version) echo "runit v0.1.0"; exit 0 ;;
             -h|--help)
-                echo "用法: $0 [system|network|security|apps|optimize]"
+                echo "用法: $0 [system|network|security|apps|optimize|maintain]"
                 exit 0
                 ;;
             *) die "未知命令: $1，使用 --help 查看帮助" ;;

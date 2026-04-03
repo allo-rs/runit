@@ -46,10 +46,10 @@ cmd_ping() {
     title "连通性测试"
     local hosts=("1.1.1.1" "8.8.8.8" "baidu.com" "google.com")
     for host in "${hosts[@]}"; do
-        local result
-        if ping -c1 -W2 "$host" &>/dev/null; then
-            local ms
-            ms=$(ping -c1 -W2 "$host" 2>/dev/null | grep 'time=' | grep -oP 'time=\K[\d.]+')
+        local result ms
+        result=$(ping -c1 -W2 "$host" 2>/dev/null)
+        if echo "$result" | grep -q 'time='; then
+            ms=$(echo "$result" | grep -oP 'time=\K[\d.]+')
             success "${host} (${ms}ms)"
         else
             error "${host} 不可达"
@@ -75,8 +75,8 @@ cmd_dns() {
     read -rp "$(echo -e "  输入域名: ")" domain
     [[ -z "$domain" ]] && return
     if has_cmd dig; then
-        dig +short "$domain" A
-        dig +short "$domain" AAAA
+        dig +short +time=2 +tries=1 "$domain" A
+        dig +short +time=2 +tries=1 "$domain" AAAA
     else
         nslookup "$domain"
     fi
@@ -91,15 +91,16 @@ cmd_speedtest() {
         awk "BEGIN { printf \"%.2f\", $bytes_per_sec * 8 / 1000000 }"
     }
 
-    # 下载测试：从 Cloudflare 拉取指定大小文件，取多轮平均
+    # 下载测试：从 Cloudflare 拉取指定大小文件，取多轮平均，单次限时 8s
     _test_download() {
-        local sizes=(10000000 25000000 100000000)  # 10MB / 25MB / 100MB
+        local sizes=(5000000 10000000 20000000)  # 5MB / 10MB / 20MB
         local total=0 count=0
 
         info "测试下载速度..."
         for size in "${sizes[@]}"; do
             local speed
             speed=$(curl -fsSL -o /dev/null \
+                --max-time 8 \
                 -w "%{speed_download}" \
                 "https://speed.cloudflare.com/__down?bytes=${size}" 2>/dev/null)
             [[ -z "$speed" || "$speed" == "0" ]] && continue
@@ -116,9 +117,9 @@ cmd_speedtest() {
         fi
     }
 
-    # 上传测试：向 Cloudflare 上传 /dev/zero 数据，取多轮平均
+    # 上传测试：向 Cloudflare 上传 /dev/zero 数据，取多轮平均，单次限时 8s
     _test_upload() {
-        local sizes=(3000000 10000000 25000000)  # 3MB / 10MB / 25MB
+        local sizes=(2000000 5000000 10000000)  # 2MB / 5MB / 10MB
         local total=0 count=0
 
         info "测试上传速度..."
@@ -127,6 +128,7 @@ cmd_speedtest() {
             speed=$(dd if=/dev/zero bs=1024 count=$(( size / 1024 )) 2>/dev/null \
                 | curl -fsSL -X POST \
                     -H "Content-Type: application/octet-stream" \
+                    --max-time 8 \
                     --data-binary @- \
                     -o /dev/null \
                     -w "%{speed_upload}" \

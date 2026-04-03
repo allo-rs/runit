@@ -7,7 +7,7 @@ MENU_ITEMS=(
     "网络连通性测试"
     "端口检测"
     "DNS 查询"
-    "网速测试 (speedtest)"
+    "网速测试 (Cloudflare)"
     "路由追踪"
 )
 
@@ -83,55 +83,88 @@ cmd_dns() {
 }
 
 cmd_speedtest() {
-    title "网速测试 (librespeed)"
+    title "网速测试 (Cloudflare)"
 
-    local bin="/usr/local/bin/librespeed-cli"
+    # 使用 curl 计算速度（单位：bytes/s），转换为 Mbps
+    _cf_speed_mbps() {
+        local bytes_per_sec="$1"
+        awk "BEGIN { printf \"%.2f\", $bytes_per_sec * 8 / 1000000 }"
+    }
 
-    # 已安装则直接运行
-    if [[ -x "$bin" ]]; then
-        "$bin"
-        return
-    fi
+    # 下载测试：从 Cloudflare 拉取指定大小文件，取多轮平均
+    _test_download() {
+        local sizes=(10000000 25000000 100000000)  # 10MB / 25MB / 100MB
+        local total=0 count=0
 
-    info "未检测到 librespeed-cli，开始下载..."
-    detect_arch
+        info "测试下载速度..."
+        for size in "${sizes[@]}"; do
+            local speed
+            speed=$(curl -fsSL -o /dev/null \
+                -w "%{speed_download}" \
+                "https://speed.cloudflare.com/__down?bytes=${size}" 2>/dev/null)
+            [[ -z "$speed" || "$speed" == "0" ]] && continue
+            total=$(awk "BEGIN { print $total + $speed }")
+            (( count++ ))
+        done
 
-    local os_str="linux"
-    [[ "$(uname)" == "Darwin" ]] && os_str="darwin"
+        if (( count == 0 )); then
+            echo "N/A"
+        else
+            local avg
+            avg=$(awk "BEGIN { print $total / $count }")
+            _cf_speed_mbps "$avg"
+        fi
+    }
 
-    local bin_arch
-    case "$ARCH" in
-        amd64) bin_arch="amd64" ;;
-        arm64) bin_arch="arm64" ;;
-        armv7) bin_arch="armv7" ;;
-        *)     die "不支持的架构：${ARCH}" ;;
-    esac
+    # 上传测试：向 Cloudflare 上传 /dev/zero 数据，取多轮平均
+    _test_upload() {
+        local sizes=(3000000 10000000 25000000)  # 3MB / 10MB / 25MB
+        local total=0 count=0
 
-    # 获取最新版本
-    local version
-    version=$(curl -fsSL https://api.github.com/repos/librespeed/speedtest-cli/releases/latest \
-        | grep '"tag_name"' | sed 's/.*"tag_name": *"\(v[^"]*\)".*/\1/')
-    [[ -z "$version" ]] && die "无法获取版本信息，请检查网络"
+        info "测试上传速度..."
+        for size in "${sizes[@]}"; do
+            local speed
+            speed=$(dd if=/dev/zero bs=1024 count=$(( size / 1024 )) 2>/dev/null \
+                | curl -fsSL -X POST \
+                    -H "Content-Type: application/octet-stream" \
+                    --data-binary @- \
+                    -o /dev/null \
+                    -w "%{speed_upload}" \
+                    "https://speed.cloudflare.com/__up" 2>/dev/null)
+            [[ -z "$speed" || "$speed" == "0" ]] && continue
+            total=$(awk "BEGIN { print $total + $speed }")
+            (( count++ ))
+        done
 
-    local url="https://github.com/librespeed/speedtest-cli/releases/download/${version}/librespeed-cli_${version#v}_${os_str}_${bin_arch}.tar.gz"
-    info "下载 librespeed-cli ${version}..."
+        if (( count == 0 )); then
+            echo "N/A"
+        else
+            local avg
+            avg=$(awk "BEGIN { print $total / $count }")
+            _cf_speed_mbps "$avg"
+        fi
+    }
 
-    local tmp
-    tmp=$(mktemp -d)
-    if ! curl -fsSL "$url" -o "${tmp}/librespeed.tar.gz"; then
-        rm -rf "$tmp"
-        die "下载失败，请检查网络或手动安装"
-    fi
+    # 测延迟
+    info "测试延迟..."
+    local latency
+    latency=$(curl -fsSL -o /dev/null \
+        -w "%{time_connect}" \
+        "https://speed.cloudflare.com/__down?bytes=0" 2>/dev/null)
+    local latency_ms
+    latency_ms=$(awk "BEGIN { printf \"%.1f\", $latency * 1000 }")
 
-    tar -xzf "${tmp}/librespeed.tar.gz" -C "$tmp"
-    install -m 755 "${tmp}/librespeed-cli" "$bin" 2>/dev/null || \
-        install -m 755 "${tmp}/librespeed-cli" "$HOME/.local/bin/librespeed-cli" 2>/dev/null || \
-        { rm -rf "$tmp"; die "安装失败，请以 root 运行"; }
-    rm -rf "$tmp"
+    local dl ul
+    dl=$(_test_download)
+    ul=$(_test_upload)
 
-    success "librespeed-cli 已安装至 ${bin}"
     echo
-    "$bin"
+    echo "  ┌─────────────────────────────────┐"
+    printf "  │  延迟（Latency）     %8s ms  │\n" "$latency_ms"
+    printf "  │  下载（Download）    %8s Mbps│\n" "$dl"
+    printf "  │  上传（Upload）      %8s Mbps│\n" "$ul"
+    echo "  │  测试节点：Cloudflare CDN       │"
+    echo "  └─────────────────────────────────┘"
 }
 
 cmd_traceroute() {

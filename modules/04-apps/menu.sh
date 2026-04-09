@@ -99,6 +99,10 @@ cmd_install_caddy() {
                     | tee /etc/yum.repos.d/caddy.repo
             "$PKG_MANAGER" install -y caddy
             ;;
+        apk)
+            info "Alpine Linux：apk 安装..."
+            apk add --no-cache caddy
+            ;;
         *)
             # 兜底：下载预编译二进制
             info "使用预编译二进制安装..."
@@ -107,7 +111,15 @@ cmd_install_caddy() {
     esac
 
     # 启动并开机自启
-    if has_cmd systemctl; then
+    if has_cmd rc-service; then
+        # Alpine / OpenRC
+        rc-update add caddy default 2>/dev/null || true
+        if rc-service caddy status 2>/dev/null | grep -q started; then
+            rc-service caddy restart
+        else
+            rc-service caddy start
+        fi
+    elif has_cmd systemctl; then
         systemctl enable --now caddy
     fi
 

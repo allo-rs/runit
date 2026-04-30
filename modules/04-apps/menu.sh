@@ -257,7 +257,7 @@ EOF
     local i=0
     while ! docker compose -f "${compose_dir}/docker-compose.yml" \
             exec -T postgres pg_isready -U "$pg_user" -d "$pg_db" &>/dev/null; do
-        ((i++))
+        i=$((i + 1))
         [[ $i -ge 30 ]] && { warn "健康检查超时，请手动确认容器状态"; break; }
         sleep 1
     done

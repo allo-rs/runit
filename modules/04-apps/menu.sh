@@ -109,13 +109,17 @@ cmd_install_caddy() {
     # ── 创建 caddy 用户与目录 ──────────────────────────────────
     id -u caddy &>/dev/null || useradd -r -s /sbin/nologin caddy
     mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
-    chown caddy:caddy /var/log/caddy /var/lib/caddy
+    chown caddy:caddy /etc/caddy /var/log/caddy /var/lib/caddy
+    chmod 750 /etc/caddy
 
     # ── 启动并开机自启 ─────────────────────────────────────────
     if has_cmd rc-service; then
         # Alpine / OpenRC：将 Token 写入 /etc/conf.d/caddy
         mkdir -p /etc/conf.d
-        [[ -n "$cf_token" ]] && echo "CLOUDFLARE_API_TOKEN=${cf_token}" > /etc/conf.d/caddy
+        if [[ -n "$cf_token" ]]; then
+            echo "CLOUDFLARE_API_TOKEN=${cf_token}" > /etc/conf.d/caddy
+            chmod 600 /etc/conf.d/caddy
+        fi
         rc-update add caddy default 2>/dev/null || true
         if rc-service caddy status 2>/dev/null | grep -q started; then
             rc-service caddy restart

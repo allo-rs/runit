@@ -5,6 +5,7 @@ MENU_TITLE="应用安装"
 MENU_ITEMS=(
     "安装 Docker"
     "安装 Caddy"
+    "安装 PostgreSQL (Docker Compose)"
 )
 
 menu_apps() {
@@ -16,6 +17,7 @@ menu_apps() {
             0) return ;;
             1) cmd_install_docker ;;
             2) cmd_install_caddy ;;
+            3) cmd_install_postgres ;;
         esac
         press_any_key
     done
@@ -165,6 +167,117 @@ EOF
     echo -e "  systemctl reload caddy   # 热重载配置"
     echo -e "  caddy validate           # 验证 Caddyfile 语法"
     echo -e "  caddy fmt --overwrite    # 格式化 Caddyfile"
+}
+
+# ── PostgreSQL (Docker Compose) ─────────────────────────────
+
+cmd_install_postgres() {
+    require_root
+    title "安装 PostgreSQL (Docker Compose)"
+
+    # 检查 Docker
+    if ! has_cmd docker; then
+        warn "未检测到 Docker，将先安装 Docker..."
+        cmd_install_docker
+        has_cmd docker || { error "Docker 安装失败，中止"; return 1; }
+    fi
+
+    # 检查 docker compose（v2）
+    if ! docker compose version &>/dev/null; then
+        die "需要 Docker Compose v2（docker compose），请先升级 Docker"
+    fi
+
+    # ── 交互配置 ──────────────────────────────────────────────
+    local pg_version pg_port pg_password pg_db pg_user pg_data_dir compose_dir
+
+    read -rp "$(echo -e "${CYAN}PostgreSQL 版本 [16]: ${NC}")"    pg_version
+    pg_version="${pg_version:-16}"
+
+    read -rp "$(echo -e "${CYAN}监听端口 [5432]: ${NC}")"         pg_port
+    pg_port="${pg_port:-5432}"
+
+    # 端口占用检查
+    if port_in_use "$pg_port"; then
+        warn "端口 ${pg_port} 已被占用"
+        confirm "确认仍使用此端口？" || return
+    fi
+
+    read -rp "$(echo -e "${CYAN}数据库用户名 [postgres]: ${NC}")" pg_user
+    pg_user="${pg_user:-postgres}"
+
+    read -rsp "$(echo -e "${CYAN}数据库密码 (必填): ${NC}")"      pg_password
+    echo
+    [[ -z "$pg_password" ]] && die "密码不能为空"
+
+    read -rp "$(echo -e "${CYAN}默认数据库名 [postgres]: ${NC}")" pg_db
+    pg_db="${pg_db:-postgres}"
+
+    read -rp "$(echo -e "${CYAN}Compose 文件目录 [/opt/postgres]: ${NC}")" compose_dir
+    compose_dir="${compose_dir:-/opt/postgres}"
+    pg_data_dir="${compose_dir}/data"
+
+    # ── 幂等检查 ──────────────────────────────────────────────
+    if [[ -f "${compose_dir}/docker-compose.yml" ]]; then
+        warn "检测到已有配置：${compose_dir}/docker-compose.yml"
+        confirm "是否覆盖并重新部署？" || return
+        docker compose -f "${compose_dir}/docker-compose.yml" down 2>/dev/null || true
+    fi
+
+    # ── 写入 docker-compose.yml ───────────────────────────────
+    mkdir -p "$compose_dir" "$pg_data_dir"
+    cat > "${compose_dir}/docker-compose.yml" << EOF
+services:
+  postgres:
+    image: postgres:${pg_version}-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${pg_user}
+      POSTGRES_PASSWORD: ${pg_password}
+      POSTGRES_DB: ${pg_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${pg_port}:5432"
+    volumes:
+      - ${pg_data_dir}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${pg_user} -d ${pg_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+EOF
+
+    info "配置文件：${compose_dir}/docker-compose.yml"
+
+    # ── 启动服务 ──────────────────────────────────────────────
+    info "拉取镜像并启动..."
+    docker compose -f "${compose_dir}/docker-compose.yml" up -d
+
+    # 等待健康检查通过（最多 30s）
+    info "等待 PostgreSQL 就绪..."
+    local i=0
+    while ! docker compose -f "${compose_dir}/docker-compose.yml" \
+            exec -T postgres pg_isready -U "$pg_user" -d "$pg_db" &>/dev/null; do
+        ((i++))
+        [[ $i -ge 30 ]] && { warn "健康检查超时，请手动确认容器状态"; break; }
+        sleep 1
+    done
+
+    echo
+    success "PostgreSQL 部署完成"
+    echo
+    info "连接信息："
+    echo -e "  主机：localhost"
+    echo -e "  端口：${pg_port}"
+    echo -e "  用户：${pg_user}"
+    echo -e "  数据库：${pg_db}"
+    echo -e "  数据目录：${pg_data_dir}"
+    echo
+    info "常用命令："
+    echo -e "  docker compose -f ${compose_dir}/docker-compose.yml ps"
+    echo -e "  docker compose -f ${compose_dir}/docker-compose.yml logs -f"
+    echo -e "  docker compose -f ${compose_dir}/docker-compose.yml down"
+    echo -e "  psql -h 127.0.0.1 -p ${pg_port} -U ${pg_user} -d ${pg_db}"
 }
 
 # 从 Caddy 官方 Download API 下载含 Cloudflare DNS 插件的定制二进制

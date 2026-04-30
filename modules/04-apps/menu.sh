@@ -309,6 +309,12 @@ _caddy_install_binary() {
     if has_cmd systemctl && [[ ! -f /etc/systemd/system/caddy.service ]]; then
         curl -fsSL "https://raw.githubusercontent.com/caddyserver/dist/master/init/caddy.service" \
             -o /etc/systemd/system/caddy.service
+        # 官方 service 未设置 HOME，caddy 无法写入配置自动保存目录
+        mkdir -p /etc/systemd/system/caddy.service.d
+        cat > /etc/systemd/system/caddy.service.d/override.conf << 'DROPIN'
+[Service]
+Environment=HOME=/var/lib/caddy
+DROPIN
         systemctl daemon-reload
     fi
 

@@ -300,8 +300,9 @@ _caddy_install_binary() {
     local tmp
     tmp=$(mktemp -d)
     curl -fsSL "$api_url" -o "${tmp}/caddy" || die "下载失败，请检查网络"
-    # 验证下载文件是合法的 ELF 可执行文件，防止下载到错误页等非二进制内容
-    file "${tmp}/caddy" | grep -q "ELF" || die "下载文件不是有效的 ELF 可执行文件，请重试"
+    # 验证下载文件是合法的 ELF 可执行文件（读取前4字节 magic：7f 45 4c 46）
+    [[ "$(od -A n -t x1 -N 4 "${tmp}/caddy" | tr -d ' \n')" == "7f454c46" ]] \
+        || die "下载文件不是有效的 ELF 可执行文件，请重试"
     "${tmp}/caddy" version &>/dev/null       || die "下载的 caddy 二进制无法执行，请重试"
     install -m 755 "${tmp}/caddy" /usr/bin/caddy
     rm -rf "$tmp"

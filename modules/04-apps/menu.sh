@@ -72,7 +72,7 @@ cmd_install_docker() {
 
 cmd_install_caddy() {
     require_root
-    title "安装 Caddy"
+    title "安装 Caddy (含 Cloudflare DNS 插件)"
 
     if has_cmd caddy; then
         local ver
@@ -81,38 +81,39 @@ cmd_install_caddy() {
         confirm "是否重新安装/升级？" || return
     fi
 
-    detect_os
-    detect_pkg_manager
+    # 所有平台统一走 Caddy 官方 API 下载含 CF 插件的定制二进制
+    _caddy_install_binary
 
-    case "$PKG_MANAGER" in
-        apt)
-            info "Debian/Ubuntu：添加官方源..."
-            apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
-            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/setup.deb.sh' | bash
-            apt-get install -y caddy
-            ;;
-        dnf|yum)
-            info "RHEL/CentOS：添加官方源..."
-            "$PKG_MANAGER" install -y 'dnf-command(copr)' 2>/dev/null || true
-            "$PKG_MANAGER" copr enable -y @caddy/caddy 2>/dev/null || \
-                curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/rpm.repo' \
-                    | tee /etc/yum.repos.d/caddy.repo
-            "$PKG_MANAGER" install -y caddy
-            ;;
-        apk)
-            info "Alpine Linux：apk 安装..."
-            apk add --no-cache caddy
-            ;;
-        *)
-            # 兜底：下载预编译二进制
-            info "使用预编译二进制安装..."
-            _caddy_install_binary
-            ;;
-    esac
+    # ── Cloudflare API Token ───────────────────────────────────
+    local cf_token
+    echo
+    info "Cloudflare DNS 插件需要 API Token 方可使用 DNS 验证 SSL"
+    info "Token 权限要求：Zone / DNS / Edit（推荐使用 Zone 范围 Token）"
+    read -rsp "$(echo -e "${CYAN}Cloudflare API Token (留空跳过): ${NC}")" cf_token
+    echo
 
-    # 启动并开机自启
+    mkdir -p /etc/caddy
+    local env_file="/etc/caddy/caddy.env"
+    if [[ -n "$cf_token" ]]; then
+        echo "CLOUDFLARE_API_TOKEN=${cf_token}" > "$env_file"
+        chmod 600 "$env_file"
+        success "Token 已写入 ${env_file}"
+    else
+        warn "未配置 Token，后续可手动写入：${env_file}"
+        touch "$env_file"
+        chmod 600 "$env_file"
+    fi
+
+    # ── 创建 caddy 用户与目录 ──────────────────────────────────
+    id -u caddy &>/dev/null || useradd -r -s /sbin/nologin caddy
+    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+    chown caddy:caddy /var/log/caddy /var/lib/caddy
+
+    # ── 启动并开机自启 ─────────────────────────────────────────
     if has_cmd rc-service; then
-        # Alpine / OpenRC
+        # Alpine / OpenRC：将 Token 写入 /etc/conf.d/caddy
+        mkdir -p /etc/conf.d
+        [[ -n "$cf_token" ]] && echo "CLOUDFLARE_API_TOKEN=${cf_token}" > /etc/conf.d/caddy
         rc-update add caddy default 2>/dev/null || true
         if rc-service caddy status 2>/dev/null | grep -q started; then
             rc-service caddy restart
@@ -120,16 +121,32 @@ cmd_install_caddy() {
             rc-service caddy start
         fi
     elif has_cmd systemctl; then
+        # systemd：官方 service 已含 EnvironmentFile=-/etc/caddy/caddy.env
+        systemctl daemon-reload
         systemctl enable --now caddy
     fi
 
-    # 写入最基础的 Caddyfile（如果不存在）
+    # ── 写入默认 Caddyfile ─────────────────────────────────────
     local caddyfile="/etc/caddy/Caddyfile"
     if [[ ! -f "$caddyfile" ]]; then
-        mkdir -p /etc/caddy
         cat > "$caddyfile" << 'EOF'
-# Caddy 配置文件
+# Caddy 配置文件 - 含 Cloudflare DNS 插件
 # 文档：https://caddyserver.com/docs/caddyfile
+
+# ── 示例：Cloudflare DNS 验证泛域名证书 ──────────────────────
+# your.domain.com {
+#     tls {
+#         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+#     }
+#     reverse_proxy localhost:8080
+# }
+#
+# *.your.domain.com {
+#     tls {
+#         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+#     }
+#     reverse_proxy localhost:8080
+# }
 
 :80 {
     respond "Caddy is running!"
@@ -143,13 +160,14 @@ EOF
     caddy version
     echo
     info "配置文件：${caddyfile}"
+    info "Token 文件：${env_file}"
     info "常用命令："
     echo -e "  systemctl reload caddy   # 热重载配置"
     echo -e "  caddy validate           # 验证 Caddyfile 语法"
     echo -e "  caddy fmt --overwrite    # 格式化 Caddyfile"
 }
 
-# 二进制安装兜底（用于不支持包管理器的系统）
+# 从 Caddy 官方 Download API 下载含 Cloudflare DNS 插件的定制二进制
 _caddy_install_binary() {
     detect_arch
     local bin_arch
@@ -160,29 +178,27 @@ _caddy_install_binary() {
         *)     die "不支持的架构：${ARCH}" ;;
     esac
 
-    info "获取最新版本号..."
-    local version
-    version=$(curl -fsSL https://api.github.com/repos/caddyserver/caddy/releases/latest \
-        | grep '"tag_name"' | sed 's/.*"tag_name": *"\(v[^"]*\)".*/\1/')
-    [[ -z "$version" ]] && die "无法获取 Caddy 版本信息"
-
-    local url="https://github.com/caddyserver/caddy/releases/download/${version}/caddy_${version#v}_linux_${bin_arch}.tar.gz"
-    info "下载 Caddy ${version} (${bin_arch})..."
+    local plugin="github.com/caddy-dns/cloudflare"
+    local api_url="https://caddyserver.com/api/download?os=linux&arch=${bin_arch}&p=${plugin}"
+    info "从 Caddy 官方 API 下载定制二进制 (含 cloudflare-dns 插件, ${bin_arch})..."
 
     local tmp
     tmp=$(mktemp -d)
-    curl -fsSL "$url" -o "${tmp}/caddy.tar.gz"
-    tar -xzf "${tmp}/caddy.tar.gz" -C "$tmp"
+    curl -fsSL "$api_url" -o "${tmp}/caddy" || die "下载失败，请检查网络"
     install -m 755 "${tmp}/caddy" /usr/local/bin/caddy
     rm -rf "$tmp"
 
-    # 创建 systemd 服务
-    if has_cmd systemctl; then
-        useradd -r -s /sbin/nologin caddy 2>/dev/null || true
-        mkdir -p /etc/caddy /var/log/caddy
-        chown caddy:caddy /var/log/caddy
+    # 部署 systemd 服务（官方 caddy.service 已含 EnvironmentFile=-/etc/caddy/caddy.env）
+    if has_cmd systemctl && [[ ! -f /etc/systemd/system/caddy.service ]]; then
         curl -fsSL "https://raw.githubusercontent.com/caddyserver/dist/master/init/caddy.service" \
             -o /etc/systemd/system/caddy.service
         systemctl daemon-reload
+    fi
+
+    # OpenRC 服务（Alpine）
+    if has_cmd rc-service && [[ ! -f /etc/init.d/caddy ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/caddyserver/dist/master/init/caddy.openrc" \
+            -o /etc/init.d/caddy 2>/dev/null || true
+        chmod +x /etc/init.d/caddy 2>/dev/null || true
     fi
 }

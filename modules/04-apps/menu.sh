@@ -277,6 +277,9 @@ EOF
     echo -e "  数据库：${pg_db}"
     echo -e "  数据目录：${pg_data_dir}"
     echo
+    info "连接 URL："
+    echo -e "  postgresql://${pg_user}:${pg_password}@127.0.0.1:${pg_port}/${pg_db}?sslmode=disable"
+    echo
     info "常用命令："
     echo -e "  docker compose -f ${compose_dir}/docker-compose.yml ps"
     echo -e "  docker compose -f ${compose_dir}/docker-compose.yml logs -f"

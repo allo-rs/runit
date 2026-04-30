@@ -209,9 +209,11 @@ cmd_install_postgres() {
     read -rp "$(echo -e "${CYAN}数据库用户名 [postgres]: ${NC}")" pg_user
     pg_user="${pg_user:-postgres}"
 
-    read -rsp "$(echo -e "${CYAN}数据库密码 (必填): ${NC}")"      pg_password
+    local pg_default_pass
+    pg_default_pass=$(tr -dc 'A-Za-z0-9@#$%' </dev/urandom | head -c 24)
+    read -rsp "$(echo -e "${CYAN}数据库密码 [回车自动生成]: ${NC}")"      pg_password
     echo
-    [[ -z "$pg_password" ]] && die "密码不能为空"
+    pg_password="${pg_password:-$pg_default_pass}"
 
     read -rp "$(echo -e "${CYAN}默认数据库名 [postgres]: ${NC}")" pg_db
     pg_db="${pg_db:-postgres}"

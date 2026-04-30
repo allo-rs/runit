@@ -112,27 +112,7 @@ cmd_install_caddy() {
     chown caddy:caddy /etc/caddy /var/log/caddy /var/lib/caddy
     chmod 750 /etc/caddy
 
-    # ── 启动并开机自启 ─────────────────────────────────────────
-    if has_cmd rc-service; then
-        # Alpine / OpenRC：将 Token 写入 /etc/conf.d/caddy
-        mkdir -p /etc/conf.d
-        if [[ -n "$cf_token" ]]; then
-            echo "CLOUDFLARE_API_TOKEN=${cf_token}" > /etc/conf.d/caddy
-            chmod 600 /etc/conf.d/caddy
-        fi
-        rc-update add caddy default 2>/dev/null || true
-        if rc-service caddy status 2>/dev/null | grep -q started; then
-            rc-service caddy restart
-        else
-            rc-service caddy start
-        fi
-    elif has_cmd systemctl; then
-        # systemd：官方 service 已含 EnvironmentFile=-/etc/caddy/caddy.env
-        systemctl daemon-reload
-        systemctl enable --now caddy
-    fi
-
-    # ── 写入默认 Caddyfile ─────────────────────────────────────
+    # ── 写入默认 Caddyfile（必须在服务启动前存在，否则 ExecStartPre 校验失败）──
     local caddyfile="/etc/caddy/Caddyfile"
     if [[ ! -f "$caddyfile" ]]; then
         cat > "$caddyfile" << 'EOF'
@@ -159,6 +139,26 @@ cmd_install_caddy() {
 }
 EOF
         info "已创建默认配置：${caddyfile}"
+    fi
+
+    # ── 启动并开机自启 ─────────────────────────────────────────
+    if has_cmd rc-service; then
+        # Alpine / OpenRC：将 Token 写入 /etc/conf.d/caddy
+        mkdir -p /etc/conf.d
+        if [[ -n "$cf_token" ]]; then
+            echo "CLOUDFLARE_API_TOKEN=${cf_token}" > /etc/conf.d/caddy
+            chmod 600 /etc/conf.d/caddy
+        fi
+        rc-update add caddy default 2>/dev/null || true
+        if rc-service caddy status 2>/dev/null | grep -q started; then
+            rc-service caddy restart
+        else
+            rc-service caddy start
+        fi
+    elif has_cmd systemctl; then
+        # systemd：官方 service 已含 EnvironmentFile=-/etc/caddy/caddy.env
+        systemctl daemon-reload
+        systemctl enable --now caddy
     fi
 
     echo

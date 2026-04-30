@@ -302,7 +302,7 @@ _caddy_install_binary() {
     local tmp
     tmp=$(mktemp -d)
     curl -fsSL "$api_url" -o "${tmp}/caddy" || die "下载失败，请检查网络"
-    install -m 755 "${tmp}/caddy" /usr/local/bin/caddy
+    install -m 755 "${tmp}/caddy" /usr/bin/caddy
     rm -rf "$tmp"
 
     # 部署 systemd 服务（官方 caddy.service 已含 EnvironmentFile=-/etc/caddy/caddy.env）

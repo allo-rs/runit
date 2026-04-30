@@ -168,9 +168,9 @@ EOF
     info "配置文件：${caddyfile}"
     info "Token 文件：${env_file}"
     info "常用命令："
-    echo -e "  systemctl reload caddy   # 热重载配置"
-    echo -e "  caddy validate           # 验证 Caddyfile 语法"
-    echo -e "  caddy fmt --overwrite    # 格式化 Caddyfile"
+    echo -e "  systemctl reload caddy                              # 热重载配置"
+    echo -e "  caddy validate --config ${caddyfile}               # 验证 Caddyfile 语法"
+    echo -e "  caddy fmt --overwrite --config ${caddyfile}        # 格式化 Caddyfile"
 }
 
 # ── PostgreSQL (Docker Compose) ─────────────────────────────

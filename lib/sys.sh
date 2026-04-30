@@ -72,7 +72,8 @@ print_sysinfo() {
     detect_os
     detect_arch
     detect_pkg_manager
-    echo -e "  系统: ${BOLD}${OS_NAME} ${OS_VERSION}${NC}  架构: ${BOLD}${ARCH}${NC}  包管理器: ${BOLD}${PKG_MANAGER}${NC}"
+    local commit="${RUNIT_COMMIT:-unknown}"
+    echo -e "  系统: ${BOLD}${OS_NAME} ${OS_VERSION}${NC}  架构: ${BOLD}${ARCH}${NC}  包管理器: ${BOLD}${PKG_MANAGER}${NC}  commit: ${DIM}${commit}${NC}"
 }
 
 # 安装依赖包（跨发行版）

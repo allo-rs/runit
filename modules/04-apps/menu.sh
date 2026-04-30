@@ -221,7 +221,7 @@ cmd_install_postgres() {
     pg_user="${pg_user:-postgres}"
 
     local pg_default_pass
-    pg_default_pass=$(tr -dc 'A-Za-z0-9@#$%' </dev/urandom | head -c 24)
+    pg_default_pass=$(tr -dc 'A-Za-z0-9@#$%' </dev/urandom | head -c 16 || true)
     read -rsp "$(echo -e "${CYAN}数据库密码 [回车自动生成]: ${NC}")"      pg_password
     echo
     pg_password="${pg_password:-$pg_default_pass}"

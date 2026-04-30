@@ -112,9 +112,9 @@ cmd_install_caddy() {
     chown caddy:caddy /etc/caddy /var/log/caddy /var/lib/caddy
     chmod 750 /etc/caddy
 
-    # ── 写入默认 Caddyfile（必须在服务启动前存在，否则 ExecStartPre 校验失败）──
+    # ── 写入默认 Caddyfile（必须在服务启动前存在，否则 ExecStart 直接退出）──
     local caddyfile="/etc/caddy/Caddyfile"
-    if [[ ! -f "$caddyfile" ]]; then
+    if [[ ! -s "$caddyfile" ]]; then
         cat > "$caddyfile" << 'EOF'
 # Caddy 配置文件 - 含 Cloudflare DNS 插件
 # 文档：https://caddyserver.com/docs/caddyfile
@@ -139,6 +139,14 @@ cmd_install_caddy() {
 }
 EOF
         info "已创建默认配置：${caddyfile}"
+    fi
+    chown caddy:caddy "$caddyfile"
+    chmod 644 "$caddyfile"
+
+    # 启动前最终校验：文件不存在则中止（避免 systemd 失败误导用户）
+    [[ -s "$caddyfile" ]] || die "Caddyfile 创建失败：${caddyfile}"
+    if ! caddy validate --config "$caddyfile" --adapter caddyfile &>/dev/null; then
+        warn "Caddyfile 语法校验未通过，请检查：${caddyfile}"
     fi
 
     # ── 启动并开机自启 ─────────────────────────────────────────

@@ -303,6 +303,7 @@ _caddy_install_binary() {
     # 验证下载文件是合法的 ELF 可执行文件（读取前4字节 magic：7f 45 4c 46）
     [[ "$(od -A n -t x1 -N 4 "${tmp}/caddy" | tr -d ' \n')" == "7f454c46" ]] \
         || die "下载文件不是有效的 ELF 可执行文件，请重试"
+    chmod +x "${tmp}/caddy"
     "${tmp}/caddy" version &>/dev/null       || die "下载的 caddy 二进制无法执行，请重试"
     install -m 755 "${tmp}/caddy" /usr/bin/caddy
     rm -rf "$tmp"

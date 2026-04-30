@@ -115,23 +115,7 @@ cmd_install_caddy() {
     local caddyfile="/etc/caddy/Caddyfile"
     if [[ ! -s "$caddyfile" ]]; then
         cat > "$caddyfile" << 'EOF'
-# Caddy 配置文件 - 含 Cloudflare DNS 插件
 # 文档：https://caddyserver.com/docs/caddyfile
-
-# ── 示例：Cloudflare DNS 验证泛域名证书 ──────────────────────
-# your.domain.com {
-#     tls {
-#         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-#     }
-#     reverse_proxy localhost:8080
-# }
-#
-# *.your.domain.com {
-#     tls {
-#         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-#     }
-#     reverse_proxy localhost:8080
-# }
 
 :80 {
     respond "Caddy is running!"
@@ -142,9 +126,7 @@ EOF
     chown caddy:caddy "$caddyfile"
     chmod 644 "$caddyfile"
 
-    # 启动前最终校验：文件不存在则中止（避免 systemd 失败误导用户）
-    [[ -s "$caddyfile" ]] || die "Caddyfile 创建失败：${caddyfile}"
-    if ! caddy validate --config "$caddyfile" --adapter caddyfile 2>/dev/null; then
+    if ! caddy validate --config "$caddyfile" 2>/dev/null; then
         die "Caddyfile 语法校验未通过，已中止启动，请检查：${caddyfile}"
     fi
 

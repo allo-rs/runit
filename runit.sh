@@ -4,15 +4,16 @@
 
 set -euo pipefail
 
-readonly RUNIT_COMMIT="990b28c"
+readonly RUNIT_COMMIT="9c4fa7c"
 
 # ── 路径初始化 ──────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 MODULES_DIR="${SCRIPT_DIR}/modules"
 
-# 远程运行时动态下载 lib
+# 远程运行时动态下载 lib（加时间戳防 CDN 缓存）
 REMOTE_BASE="https://raw.githubusercontent.com/allo-rs/runit/main"
+_CACHE_BUST="?t=$(date +%s)"
 
 # ── 加载公共库 ──────────────────────────────────────────────
 _load_lib() {
@@ -23,7 +24,7 @@ _load_lib() {
         source "$local_path"
     else
         # 远程模式：从 GitHub 下载
-        source <(curl -fsSL "${REMOTE_BASE}/lib/${lib}" 2>/dev/null) || {
+        source <(curl -fsSL "${REMOTE_BASE}/lib/${lib}${_CACHE_BUST}" 2>/dev/null) || {
             echo "[ERROR] 无法加载库: ${lib}" >&2
             exit 1
         }
@@ -42,7 +43,7 @@ _load_module() {
         # shellcheck source=/dev/null
         source "$local_path"
     else
-        source <(curl -fsSL "${REMOTE_BASE}/modules/${mod_path}/menu.sh" 2>/dev/null)
+        source <(curl -fsSL "${REMOTE_BASE}/modules/${mod_path}/menu.sh${_CACHE_BUST}" 2>/dev/null)
     fi
 }
 

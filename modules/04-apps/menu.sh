@@ -94,7 +94,12 @@ cmd_install_caddy() {
     read -rsp "$(echo -e "${CYAN}Cloudflare API Token (留空跳过): ${NC}")" cf_token
     echo
 
-    mkdir -p /etc/caddy
+    # ── 创建 caddy 用户与目录 ──────────────────────────────────
+    id -u caddy &>/dev/null || useradd -r -s /sbin/nologin caddy
+    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
+    chown caddy:caddy /etc/caddy /var/log/caddy /var/lib/caddy
+    chmod 750 /etc/caddy
+
     local env_file="/etc/caddy/caddy.env"
     if [[ -n "$cf_token" ]]; then
         echo "CLOUDFLARE_API_TOKEN=${cf_token}" > "$env_file"
@@ -105,12 +110,6 @@ cmd_install_caddy() {
         touch "$env_file"
         chmod 600 "$env_file"
     fi
-
-    # ── 创建 caddy 用户与目录 ──────────────────────────────────
-    id -u caddy &>/dev/null || useradd -r -s /sbin/nologin caddy
-    mkdir -p /etc/caddy /var/log/caddy /var/lib/caddy
-    chown caddy:caddy /etc/caddy /var/log/caddy /var/lib/caddy
-    chmod 750 /etc/caddy
 
     # ── 写入默认 Caddyfile（必须在服务启动前存在，否则 ExecStart 直接退出）──
     local caddyfile="/etc/caddy/Caddyfile"
@@ -145,13 +144,13 @@ EOF
 
     # 启动前最终校验：文件不存在则中止（避免 systemd 失败误导用户）
     [[ -s "$caddyfile" ]] || die "Caddyfile 创建失败：${caddyfile}"
-    if ! caddy validate --config "$caddyfile" --adapter caddyfile &>/dev/null; then
-        warn "Caddyfile 语法校验未通过，请检查：${caddyfile}"
+    if ! caddy validate --config "$caddyfile" --adapter caddyfile 2>/dev/null; then
+        die "Caddyfile 语法校验未通过，已中止启动，请检查：${caddyfile}"
     fi
 
     # ── 启动并开机自启 ─────────────────────────────────────────
     if has_cmd rc-service; then
-        # Alpine / OpenRC：将 Token 写入 /etc/conf.d/caddy
+        # Alpine / OpenRC：caddy.env 是主配置；/etc/conf.d/caddy 供 OpenRC init 脚本注入环境变量
         mkdir -p /etc/conf.d
         if [[ -n "$cf_token" ]]; then
             echo "CLOUDFLARE_API_TOKEN=${cf_token}" > /etc/conf.d/caddy
@@ -166,7 +165,11 @@ EOF
     elif has_cmd systemctl; then
         # systemd：官方 service 已含 EnvironmentFile=-/etc/caddy/caddy.env
         systemctl daemon-reload
-        systemctl enable --now caddy
+        if systemctl is-active --quiet caddy; then
+            systemctl restart caddy
+        else
+            systemctl enable --now caddy
+        fi
     fi
 
     echo
@@ -174,7 +177,7 @@ EOF
     caddy version
     echo
     info "配置文件：${caddyfile}"
-    info "Token 文件：${env_file}"
+    [[ -n "$cf_token" ]] && info "Token 文件：${env_file}"
     info "常用命令："
     echo -e "  systemctl reload caddy                              # 热重载配置"
     echo -e "  caddy validate --config ${caddyfile}               # 验证 Caddyfile 语法"
@@ -315,20 +318,23 @@ _caddy_install_binary() {
     local tmp
     tmp=$(mktemp -d)
     curl -fsSL "$api_url" -o "${tmp}/caddy" || die "下载失败，请检查网络"
+    # 验证下载文件是合法的 ELF 可执行文件，防止下载到错误页等非二进制内容
+    file "${tmp}/caddy" | grep -q "ELF" || die "下载文件不是有效的 ELF 可执行文件，请重试"
+    "${tmp}/caddy" version &>/dev/null       || die "下载的 caddy 二进制无法执行，请重试"
     install -m 755 "${tmp}/caddy" /usr/bin/caddy
     rm -rf "$tmp"
 
     # 部署 systemd 服务（官方 caddy.service 已含 EnvironmentFile=-/etc/caddy/caddy.env）
     if has_cmd systemctl && [[ ! -f /etc/systemd/system/caddy.service ]]; then
         curl -fsSL "https://raw.githubusercontent.com/caddyserver/dist/master/init/caddy.service" \
-            -o /etc/systemd/system/caddy.service
+            -o /etc/systemd/system/caddy.service \
+            || die "下载 caddy.service 失败，请检查网络"
         # 官方 service 未设置 HOME，caddy 无法写入配置自动保存目录
         mkdir -p /etc/systemd/system/caddy.service.d
         cat > /etc/systemd/system/caddy.service.d/override.conf << 'DROPIN'
 [Service]
 Environment=HOME=/var/lib/caddy
 DROPIN
-        systemctl daemon-reload
     fi
 
     # OpenRC 服务（Alpine）

@@ -6,6 +6,7 @@ MENU_ITEMS=(
     "安装 Docker"
     "安装 Caddy"
     "安装 PostgreSQL (Docker Compose)"
+    "修改 PostgreSQL 密码"
 )
 
 menu_apps() {
@@ -18,6 +19,7 @@ menu_apps() {
             1) cmd_install_docker ;;
             2) cmd_install_caddy ;;
             3) cmd_install_postgres ;;
+            4) cmd_change_postgres_password ;;
         esac
         press_any_key
     done
@@ -220,6 +222,20 @@ cmd_install_postgres() {
         warn "检测到已有配置：${compose_dir}/docker-compose.yml"
         confirm "是否覆盖并重新部署？" || return
         docker compose -f "${compose_dir}/docker-compose.yml" down 2>/dev/null || true
+
+        # 数据目录存在时询问是否清除
+        # PostgreSQL 仅在数据目录为空时才读取 POSTGRES_PASSWORD 初始化
+        # 若保留旧数据，新密码不会生效
+        if [[ -d "$pg_data_dir" ]] && [[ -n "$(ls -A "$pg_data_dir" 2>/dev/null)" ]]; then
+            warn "检测到旧数据目录：${pg_data_dir}"
+            warn "保留旧数据则新密码不会生效（PostgreSQL 仅在首次初始化时读取密码）"
+            if confirm "是否清除旧数据（将删除所有数据库内容）？"; then
+                rm -rf "${pg_data_dir:?}"/*
+                info "旧数据已清除，将以新密码重新初始化"
+            else
+                info "保留旧数据，新密码不会生效，连接时请使用旧密码"
+            fi
+        fi
     fi
 
     # ── 写入 docker-compose.yml ───────────────────────────────
@@ -280,6 +296,46 @@ EOF
     echo -e "  docker compose -f ${compose_dir}/docker-compose.yml logs -f"
     echo -e "  docker compose -f ${compose_dir}/docker-compose.yml down"
     echo -e "  psql -h 127.0.0.1 -p ${pg_port} -U ${pg_user} -d ${pg_db}"
+}
+
+cmd_change_postgres_password() {
+    require_root
+    title "修改 PostgreSQL 密码"
+
+    local compose_dir pg_user pg_db new_password
+    read -rp "$(echo -e "${CYAN}Compose 文件目录 [/opt/postgres]: ${NC}")" compose_dir
+    compose_dir="${compose_dir:-/opt/postgres}"
+
+    if [[ ! -f "${compose_dir}/docker-compose.yml" ]]; then
+        error "未找到配置文件：${compose_dir}/docker-compose.yml"
+        return 1
+    fi
+
+    # 从现有 compose 文件读取用户名和数据库名
+    pg_user=$(grep 'POSTGRES_USER' "${compose_dir}/docker-compose.yml" | awk -F': ' '{print $2}' | tr -d ' ')
+    pg_db=$(grep 'POSTGRES_DB' "${compose_dir}/docker-compose.yml" | awk -F': ' '{print $2}' | tr -d ' ')
+    pg_user="${pg_user:-postgres}"
+    pg_db="${pg_db:-postgres}"
+
+    local default_pass
+    default_pass=$(tr -dc 'A-Za-z0-9@#$%' </dev/urandom | head -c 16 || true)
+    read -rsp "$(echo -e "${CYAN}新密码 [回车自动生成]: ${NC}")" new_password
+    echo
+    new_password="${new_password:-$default_pass}"
+
+    # 通过 psql 在运行中的容器内修改密码
+    if ! docker compose -f "${compose_dir}/docker-compose.yml" exec -T postgres \
+            psql -U "$pg_user" -d "$pg_db" -c "ALTER USER ${pg_user} PASSWORD '${new_password}';" &>/dev/null; then
+        error "密码修改失败，请确认容器正在运行（docker compose ps）"
+        return 1
+    fi
+
+    # 同步更新 docker-compose.yml 中的密码，保持文件与实际一致
+    sed -i "s|POSTGRES_PASSWORD:.*|POSTGRES_PASSWORD: ${new_password}|" "${compose_dir}/docker-compose.yml"
+
+    success "密码已修改"
+    echo -e "  用户：${pg_user}"
+    echo -e "  新密码：${new_password}"
 }
 
 # 从 Caddy 官方 Download API 下载含 Cloudflare DNS 插件的定制二进制

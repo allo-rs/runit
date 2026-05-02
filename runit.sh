@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # runit - 服务器一键脚本工具集
-# 用法: bash <(curl -fsSL https://raw.githubusercontent.com/allo-rs/runit/main/runit.sh)
+# 用法: bash <(curl -fsSL "https://raw.githubusercontent.com/allo-rs/runit/main/runit.sh?t=$(date +%s)")
 
 set -euo pipefail
 
-readonly RUNIT_COMMIT="ee0cae2"
+readonly RUNIT_COMMIT="884687f"
 
 # ── 路径初始化 ──────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

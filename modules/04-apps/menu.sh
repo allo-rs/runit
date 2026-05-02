@@ -205,7 +205,7 @@ cmd_install_postgres() {
     pg_user="${pg_user:-postgres}"
 
     local pg_default_pass
-    pg_default_pass=$(tr -dc 'A-Za-z0-9@#$%' </dev/urandom | head -c 16 || true)
+    pg_default_pass=$(tr -dc 'A-Za-z0-9@%' </dev/urandom | head -c 20 || true)
     read -rsp "$(echo -e "${CYAN}数据库密码 [回车自动生成]: ${NC}")"      pg_password
     echo
     pg_password="${pg_password:-$pg_default_pass}"
@@ -248,7 +248,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${pg_user}
-      POSTGRES_PASSWORD: ${pg_password}
+      POSTGRES_PASSWORD: '${pg_password}'
       POSTGRES_DB: ${pg_db}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
@@ -331,7 +331,7 @@ cmd_change_postgres_password() {
     fi
 
     # 同步更新 docker-compose.yml 中的密码，保持文件与实际一致
-    sed -i "s|POSTGRES_PASSWORD:.*|POSTGRES_PASSWORD: ${new_password}|" "${compose_dir}/docker-compose.yml"
+    sed -i "s|POSTGRES_PASSWORD:.*|POSTGRES_PASSWORD: '${new_password}'|" "${compose_dir}/docker-compose.yml"
 
     success "密码已修改"
     echo -e "  用户：${pg_user}"

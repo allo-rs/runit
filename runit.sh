@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-readonly RUNIT_COMMIT="884687f"
+readonly RUNIT_COMMIT="b1bc906"
 
 # ── 路径初始化 ──────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

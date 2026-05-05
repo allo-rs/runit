@@ -7,6 +7,8 @@ MENU_ITEMS=(
     "安装 Caddy"
     "安装 PostgreSQL (Docker Compose)"
     "修改 PostgreSQL 密码"
+    "安装 ddns-go"
+    "管理 ddns-go"
 )
 
 menu_apps() {
@@ -20,6 +22,8 @@ menu_apps() {
             2) cmd_install_caddy ;;
             3) cmd_install_postgres ;;
             4) cmd_change_postgres_password ;;
+            5) cmd_install_ddns_go ;;
+            6) menu_ddns_go_manage ;;
         esac
         press_any_key
     done
@@ -336,6 +340,294 @@ cmd_change_postgres_password() {
     success "密码已修改"
     echo -e "  用户：${pg_user}"
     echo -e "  新密码：${new_password}"
+}
+
+cmd_install_ddns_go() {
+    require_root
+    title "安装 ddns-go (Cloudflare)"
+
+    if has_cmd ddns-go; then
+        local ver
+        ver=$(ddns-go -v 2>/dev/null | head -1 || true)
+        warn "ddns-go 已安装：${ver}"
+        confirm "是否重新安装/升级？" || return
+        ddns-go -s stop 2>/dev/null || true
+        ddns-go -s uninstall 2>/dev/null || true
+    fi
+
+    # ── 收集配置 ──────────────────────────────────────────────
+    local cf_token ddns_interval
+    read -rsp "$(echo -e "${CYAN}Cloudflare API Token: ${NC}")" cf_token
+    echo
+    [[ -n "$cf_token" ]] || { error "Token 不能为空"; return 1; }
+
+    echo
+    info "IPv4 域名（每行一个，留空结束）："
+    local domains_v4=()
+    while true; do
+        read -rp "  域名: " _d
+        [[ -z "$_d" ]] && break
+        domains_v4+=("$_d")
+    done
+    [[ ${#domains_v4[@]} -gt 0 ]] || { error "至少需要一个域名"; return 1; }
+
+    local enable_ipv6=false domains_v6=()
+    if confirm "同时更新 IPv6 (AAAA) 记录？"; then
+        enable_ipv6=true
+        info "IPv6 域名（留空则与 IPv4 相同）："
+        while true; do
+            read -rp "  域名: " _d
+            [[ -z "$_d" ]] && break
+            domains_v6+=("$_d")
+        done
+        [[ ${#domains_v6[@]} -eq 0 ]] && domains_v6=("${domains_v4[@]}")
+    fi
+
+    read -rp "$(echo -e "${CYAN}IP 检测间隔（秒）[300]: ${NC}")" ddns_interval
+    ddns_interval="${ddns_interval:-300}"
+
+    # ── 安装二进制 ────────────────────────────────────────────
+    _ddns_go_install_binary
+
+    # ── 写入配置文件 ──────────────────────────────────────────
+    local config_file="/root/.ddns_go_config.yaml"
+    _ddns_go_write_config "$cf_token" "$enable_ipv6" "$ddns_interval" \
+        "${domains_v4[*]}" "${domains_v6[*]}" > "$config_file"
+    chmod 600 "$config_file"
+
+    # ── 安装服务（-noweb 禁用 Web UI） ────────────────────────
+    ddns-go -s install -f "${ddns_interval}" -noweb
+    ddns-go -s start
+
+    echo
+    success "ddns-go 安装完成"
+    ddns-go -v 2>/dev/null | head -1 || true
+    echo
+    info "配置文件：${config_file}"
+    info "IPv4 域名："
+    for _d in "${domains_v4[@]}"; do echo -e "  ${_d}"; done
+    if [[ "$enable_ipv6" == "true" ]]; then
+        info "IPv6 域名："
+        for _d in "${domains_v6[@]}"; do echo -e "  ${_d}"; done
+    fi
+    echo
+    info "常用命令："
+    echo -e "  ddns-go -s start      # 启动"
+    echo -e "  ddns-go -s stop       # 停止"
+    echo -e "  ddns-go -s restart    # 重启"
+    echo -e "  ddns-go -s uninstall  # 卸载服务"
+}
+
+_ddns_go_write_config() {
+    local token="$1" enable_ipv6="$2" interval="$3"
+    local -a v4_domains=() v6_domains=()
+    IFS=' ' read -ra v4_domains <<< "$4"
+    IFS=' ' read -ra v6_domains <<< "$5"
+
+    # 构建域名缩进列表
+    local v4_list="" v6_list=""
+    for d in "${v4_domains[@]}"; do v4_list+="    - ${d}"$'\n'; done
+    for d in "${v6_domains[@]}"; do v6_list+="    - ${d}"$'\n'; done
+
+    local ipv6_enable="false"
+    [[ "$enable_ipv6" == "true" ]] && ipv6_enable="true"
+
+    cat << EOF
+dnsconf:
+- name: cloudflare
+  ipv4:
+    enable: true
+    gettype: url
+    url: https://myip.ipip.net
+    domains:
+${v4_list}  ipv6:
+    enable: ${ipv6_enable}
+    gettype: url
+    url: https://6.ipw.cn
+    domains:
+${v6_list}  dns:
+    name: cloudflare
+    id: ""
+    secret: ${token}
+  ttl: ""
+username: ""
+password: ""
+notallowwanaccess: true
+lang: zh
+EOF
+}
+
+_ddns_go_install_binary() {
+    detect_arch
+    local file_arch
+    case "$ARCH" in
+        amd64) file_arch="x86_64" ;;
+        arm64) file_arch="arm64" ;;
+        armv7) file_arch="armv7" ;;
+        *)     die "不支持的架构：${ARCH}" ;;
+    esac
+
+    info "获取最新版本..."
+    local version
+    version=$(curl -sL "https://api.github.com/repos/jeessy2/ddns-go/releases/latest" \
+        | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    [[ -n "$version" ]] || die "获取版本号失败，请检查网络"
+    info "最新版本：v${version}"
+
+    local filename="ddns-go_${version}_linux_${file_arch}.tar.gz"
+    local url="https://github.com/jeessy2/ddns-go/releases/download/v${version}/${filename}"
+    info "下载：${url}"
+
+    local tmp
+    tmp=$(mktemp -d)
+    curl -fsSL "$url" -o "${tmp}/${filename}" || die "下载失败，请检查网络"
+    tar -xzf "${tmp}/${filename}" -C "$tmp" || die "解压失败"
+    [[ -f "${tmp}/ddns-go" ]] || die "未找到 ddns-go 可执行文件"
+    chmod +x "${tmp}/ddns-go"
+    "${tmp}/ddns-go" -v &>/dev/null || die "下载的二进制无法执行，请重试"
+    install -m 755 "${tmp}/ddns-go" /usr/bin/ddns-go
+    rm -rf "$tmp"
+}
+
+# ── ddns-go 管理子菜单 ───────────────────────────────────────
+
+_DDNS_GO_CONFIG="/root/.ddns_go_config.yaml"
+
+_DDNS_GO_MANAGE_ITEMS=(
+    "查看当前配置"
+    "修改配置"
+    "查看服务状态"
+    "重启服务"
+)
+
+menu_ddns_go_manage() {
+    while true; do
+        render_menu "管理 ddns-go" "${_DDNS_GO_MANAGE_ITEMS[@]}"
+        local choice
+        choice=$(read_choice "${#_DDNS_GO_MANAGE_ITEMS[@]}")
+        case "$choice" in
+            0) return ;;
+            1) cmd_show_ddns_go_config ;;
+            2) cmd_edit_ddns_go_config ;;
+            3) cmd_status_ddns_go ;;
+            4) cmd_restart_ddns_go ;;
+        esac
+        press_any_key
+    done
+}
+
+cmd_show_ddns_go_config() {
+    title "ddns-go 当前配置"
+
+    [[ -f "$_DDNS_GO_CONFIG" ]] || { error "配置文件不存在：${_DDNS_GO_CONFIG}"; return 1; }
+
+    # 解析并展示，Token 脱敏
+    local token domains_v4 domains_v6 interval
+
+    token=$(grep '^\s*secret:' "$_DDNS_GO_CONFIG" | head -1 | sed 's/.*secret: *//')
+    local token_masked="${token:0:6}****${token: -4}"
+
+    echo
+    info "配置文件：${_DDNS_GO_CONFIG}"
+    echo
+    info "DNS 服务商：Cloudflare"
+    echo -e "  API Token：${token_masked}"
+    echo
+
+    info "IPv4 域名："
+    awk '/ipv4:/,/ipv6:/' "$_DDNS_GO_CONFIG" | grep '^\s*- ' | sed 's/.*- /  /'
+
+    local ipv6_enable
+    ipv6_enable=$(awk '/ipv6:/,/dns:/' "$_DDNS_GO_CONFIG" | grep 'enable:' | head -1 | awk '{print $2}')
+    if [[ "$ipv6_enable" == "true" ]]; then
+        echo
+        info "IPv6 域名："
+        awk '/ipv6:/,/dns:/' "$_DDNS_GO_CONFIG" | grep '^\s*- ' | sed 's/.*- /  /'
+    fi
+
+    echo
+    local status="未运行"
+    if has_cmd systemctl && systemctl is-active --quiet ddns-go 2>/dev/null; then
+        status="${GREEN}运行中${NC}"
+    elif has_cmd rc-service && rc-service ddns-go status 2>/dev/null | grep -q started; then
+        status="${GREEN}运行中${NC}"
+    fi
+    echo -e "  服务状态：${status}"
+}
+
+cmd_edit_ddns_go_config() {
+    require_root
+    title "修改 ddns-go 配置"
+
+    [[ -f "$_DDNS_GO_CONFIG" ]] || { error "配置文件不存在，请先安装 ddns-go"; return 1; }
+
+    # 读取旧值作为默认值
+    local old_token old_interval
+    old_token=$(grep '^\s*secret:' "$_DDNS_GO_CONFIG" | head -1 | sed 's/.*secret: *//')
+    old_interval=""
+
+    echo
+    local cf_token
+    read -rsp "$(echo -e "${CYAN}Cloudflare API Token [回车保留原值]: ${NC}")" cf_token
+    echo
+    cf_token="${cf_token:-$old_token}"
+
+    echo
+    info "IPv4 域名（每行一个，留空结束）："
+    local domains_v4=()
+    while true; do
+        read -rp "  域名: " _d
+        [[ -z "$_d" ]] && break
+        domains_v4+=("$_d")
+    done
+    [[ ${#domains_v4[@]} -gt 0 ]] || { error "至少需要一个域名"; return 1; }
+
+    local enable_ipv6=false domains_v6=()
+    if confirm "同时更新 IPv6 (AAAA) 记录？"; then
+        enable_ipv6=true
+        info "IPv6 域名（留空则与 IPv4 相同）："
+        while true; do
+            read -rp "  域名: " _d
+            [[ -z "$_d" ]] && break
+            domains_v6+=("$_d")
+        done
+        [[ ${#domains_v6[@]} -eq 0 ]] && domains_v6=("${domains_v4[@]}")
+    fi
+
+    local ddns_interval
+    read -rp "$(echo -e "${CYAN}IP 检测间隔（秒）[300]: ${NC}")" ddns_interval
+    ddns_interval="${ddns_interval:-300}"
+
+    _ddns_go_write_config "$cf_token" "$enable_ipv6" "$ddns_interval" \
+        "${domains_v4[*]}" "${domains_v6[*]}" > "$_DDNS_GO_CONFIG"
+    chmod 600 "$_DDNS_GO_CONFIG"
+
+    cmd_restart_ddns_go
+    success "配置已更新"
+}
+
+cmd_status_ddns_go() {
+    title "ddns-go 服务状态"
+    if has_cmd systemctl; then
+        systemctl status ddns-go --no-pager 2>/dev/null || warn "服务未找到或未运行"
+    elif has_cmd rc-service; then
+        rc-service ddns-go status 2>/dev/null || warn "服务未找到或未运行"
+    else
+        error "无法检测服务状态（不支持的 init 系统）"
+    fi
+}
+
+cmd_restart_ddns_go() {
+    require_root
+    info "重启 ddns-go 服务..."
+    if has_cmd systemctl; then
+        systemctl restart ddns-go && success "重启成功" || error "重启失败"
+    elif has_cmd rc-service; then
+        rc-service ddns-go restart && success "重启成功" || error "重启失败"
+    else
+        ddns-go -s stop 2>/dev/null || true
+        ddns-go -s start && success "重启成功" || error "重启失败"
+    fi
 }
 
 # 从 Caddy 官方 Download API 下载含 Cloudflare DNS 插件的定制二进制

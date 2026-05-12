@@ -81,7 +81,9 @@ cmd_setup_pubkey() {
     # ── 4. 验证配置语法 ────────────────────────────────────────
     echo
     info "验证配置语法..."
-    if sshd -t 2>/dev/null; then
+    local sshd_bin
+    sshd_bin=$(command -v sshd 2>/dev/null || command -v /usr/sbin/sshd 2>/dev/null || echo "/usr/sbin/sshd")
+    if "$sshd_bin" -t 2>/dev/null; then
         success "配置语法正确"
     else
         error "配置语法有误！正在还原备份..."
